@@ -5,3 +5,4 @@ edition = "2021"
 
 [dependencies]
 serialport = "4.7.0"
+customCANProtocol = {path = "../target/libs/custom-can-protocol/packet-rust/"}
