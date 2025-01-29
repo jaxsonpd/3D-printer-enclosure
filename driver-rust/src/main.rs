@@ -1,4 +1,6 @@
 use serialport::SerialPort;
+use std::collections::btree_map::Range;
+use std::fs::read;
 use std::io::{self, Read, Write};
 use std::time::Duration;
 use customCANProtocol::{Packet, PacketByteLocations};
@@ -22,27 +24,40 @@ fn open_serial_port(port_name: &str, baud_rate: u32) -> Result<Box<dyn SerialPor
 /// 
 /// # Returns
 /// Return the packet as a buffer of u8s
-fn read_packet(port: Box<dyn SerialPort>) -> Result<Box<Vec<u8>>, Box<dyn std::error::Error>> {
+fn read_packet(port: &mut Box<dyn SerialPort>) -> Result<Box<Vec<u8>>, Box<dyn std::error::Error>> {
     let mut buffer = vec![0u8; customCANProtocol::MAX_PACKET_LENGTH];
     let mut idx = 0;
+    let mut read_buffer: Vec<u8> = vec![0; 1];
 
     loop {
-        let byte = port.read()?;
-        if byte == customCANProtocol::PACKET_START_BYTE {
-            buffer[idx] = byte;
-            idx += 1;
-            break;
+        let num_bytes = port.read(&mut read_buffer)?;
+        if num_bytes > 0 {
+            let byte = read_buffer[0];
+
+            if byte == customCANProtocol::PACKET_START_BYTE {
+                buffer[idx] = byte;
+                idx += 1;
+                break;
+            }
         }
     }
-
-    let cmd_byte = port.read();
-    buffer[idx] = Ok(cmd_byte);
-    idx += 1;
-
-    print!("Got packet: ");
-    for x in &buffer {
-        print!("{}", x);
+    
+    loop {
+        let num_bytes = port.read(&mut read_buffer)?;
+        if num_bytes > 0 {
+            buffer[idx] = read_buffer[0];
+            idx += 1; 
+            if read_buffer[0] == customCANProtocol::PACKET_START_BYTE {
+                break;       
+            }
+        }
     }
+    
+    print!("Got packet: ");
+    for &x in &buffer[..idx] {
+        print!("{}-", x);
+    }
+    print!("\n");
 
     Ok(Box::new(buffer))
 }
@@ -64,26 +79,15 @@ fn main() {
 
     println!("Reading from serial port: {}", port_name);
     loop {
-        read_packet(port);
-    }
-
-    let mut buffer: Vec<u8> = vec![0; 1024];
-
-    loop {
-        match port.read(&mut buffer) {
-            Ok(bytes_read) => {
-                let received = String::from_utf8_lossy(&buffer[..bytes_read]);
-                print!("{}", received);
-                io::stdout().flush().unwrap();
-            }
-            Err(ref e) if e.kind() == std::io::ErrorKind::TimedOut => {
-                // Continue reading on timeout (no data available)
-                continue;
-            }
-            Err(e) => {
-                eprintln!("Error reading from serial port: {:?}", e);
-                break;
-            }
+        let packet: Vec<u8>;
+        if let Ok(data) = read_packet(&mut port) {
+            // `data` is a `Box<Vec<u8>>`
+            packet= *data;
+        } else {
+            eprintln!("Error reading packet");
+            // Handle the error as appropriate
         }
+        let read_packet = customCANProtocol::Packet::new(packet[1], packet[1..]);
+        read_packet.validate();
     }
 }
